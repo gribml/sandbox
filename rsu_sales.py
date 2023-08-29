@@ -39,11 +39,12 @@ class Verbose(Enum):
     MINIMUM = 1
     FULL = 2
 
-def minimize_tax(amount: Union[str, int, float], price: float, allocs: pd.DataFrame, verbose: Verbose, st_cap_gains=0.375, lt_cap_gains=0.238, minimum_tax=0) -> pd.DataFrame:
+def minimize_tax(amount: Union[str, int, float], price: float, allocs: pd.DataFrame, verbose: Verbose, st_cap_gains=0.375, lt_cap_gains=0.238, minimum_gain=-3000) -> pd.DataFrame:
     # given a table of stock allocations provide a set of trades which minimize tax implication of trade
     solver = pywraplp.Solver.CreateSolver('SAT')
     trades: List[pywraplp.Variable] = []
     total_tax = None  # variable to minimize
+    total_gain = None
 
     # flexibility to what the passed amount can be
     if isinstance(amount, str):
@@ -65,15 +66,18 @@ def minimize_tax(amount: Union[str, int, float], price: float, allocs: pd.DataFr
     for _, row in allocs.iterrows():
         trade_alloc = solver.IntVar(0, int(row.num_shares), row['name'])
         trades.append(trade_alloc)
-        trade_tax = trade_alloc * (price - row['cost_basis_per_share']) * (lt_cap_gains if row['gain_loss'] == 'Long Term' else st_cap_gains)
+        trade_gain = trade_alloc * (price - row['cost_basis_per_share'])
+        trade_tax = trade_gain * (lt_cap_gains if row['gain_loss'] == 'Long Term' else st_cap_gains)
         if total_tax is None:
             total_tax = trade_tax
+            total_gain = trade_gain
         else:
             total_tax += trade_tax
+            total_gain += trade_gain
 
     # CONSTRAINTS
     # sum of all taxes should not be too low
-    solver.Add(total_tax >= minimum_tax)
+    solver.Add(total_gain >= minimum_gain)
     # sum of all trade amounts should match the amount we expected to sell
     solver.Add(sum(trades) == amount)
     # minimize the tax
@@ -83,33 +87,38 @@ def minimize_tax(amount: Union[str, int, float], price: float, allocs: pd.DataFr
     if status == pywraplp.Solver.OPTIMAL:
         if verbose != Verbose.SILENT:
             print(f"Expected Tax Amount = {solver.Objective().Value()}")
-            if verbose == Verbose.FULL:
-                print("Solution:")
-                for trd_var in trades:
-                    print(f"{trd_var.name()} = {trd_var.solution_value()}")
 
-        trade_amounts_lookup = {}
-        tax_amounts_lookup = {}
-        total_income = 0
+        amt_traded = {}
+        tax_owed = {}
+        gain_loss = {}
+        income = {}
 
         for trd_var in trades:
-            trade_amounts_lookup[trd_var.name()] = trd_var.solution_value()
-            row = allocs[allocs['name'] == trd_var.name()].iloc[0]
+            key = trd_var.name()
+            row = allocs[allocs['name'] == key].iloc[0]
             tax_rate = lt_cap_gains if (row.gain_loss == 'Long Term') else st_cap_gains
-            income = trd_var.solution_value() * price
-            tax_amounts_lookup[trd_var.name()] = trd_var.solution_value() * (price - row.cost_basis_per_share) * tax_rate
-            total_income += income
 
-        allocs['suggested_trades'] = allocs['name'].apply(lambda n: trade_amounts_lookup[n])
-        allocs['expected_tax'] = allocs['name'].apply(lambda n: tax_amounts_lookup[n])
+            amt_traded[key] = trd_var.solution_value()
+            gain_loss[key] = amt_traded[key] * (price - row.cost_basis_per_share)
+            tax_owed[key] = trd_var.solution_value() * (price - row.cost_basis_per_share) * tax_rate
+            income[key] = amt_traded[key] * price
+
+            if verbose == Verbose.FULL:
+                print(f"{key} = {amt_traded[key]}, income = {income[key]}, gain/loss = {gain_loss[key]}, tax = {tax_owed[key]}")
+
+        allocs['suggested_trades'] = allocs['name'].apply(lambda n: amt_traded[n])
+        allocs['trade_gain'] = allocs['name'].apply(lambda n: gain_loss[n])
+        allocs['trade_tax'] = allocs['name'].apply(lambda n: tax_owed[n])
+        allocs['trade_income'] = allocs['name'].apply(lambda n: income[n])
 
         if verbose != Verbose.SILENT:
-            print(f'Tax rate: {sum(tax_amounts_lookup.values()) / total_income}')
+            print(f'Tax rate: {sum(tax_owed.values()) / sum(gain_loss.values())}')
     else:
         if verbose != Verbose.SILENT:
             print("The problem does not have an optimal solution.")
 
     return allocs
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
