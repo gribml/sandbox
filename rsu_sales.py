@@ -1,20 +1,26 @@
 import argparse
 from typing import List, Union, Tuple
 from enum import Enum
+from datetime import timedelta, date
+from io import StringIO
+from dateutil import parser
 import pandas as pd
 from bs4 import BeautifulSoup
 from ortools.linear_solver import pywraplp
 
-def shareworks_html_to_df(soup_or_html):
-    df = pd.read_html(str(soup_or_html))[0]
+
+def shareworks_html_to_df(soup_or_html, asofdate=date.today(), new_data=[]):
+    df = pd.read_html(StringIO(str(soup_or_html)))[0]
     df.columns = df.columns.get_level_values(1)
-    df.rename(columns={
+    df = df.rename(columns={
         'Cost Basis *': 'cost_basis',
         'Cost Basis Per Share *': 'cost_basis_per_share',
         'Number of Shares': 'num_shares',
-        'Gain/Loss': 'gain_loss'
-    }, inplace=True)
-    
+        'Gain/Loss': 'gain_loss',
+        'Acquisition Date': 'acquisition_date',
+        'Lot': 'lot',
+    })
+
     for col in ['All from Tranche', 'Employee Shares to Sell/Transfer', 'Plan - Fund', 'Type of Money']:
         try:
             del df[col]
@@ -24,23 +30,47 @@ def shareworks_html_to_df(soup_or_html):
     def parse_value(v):
         return float(v.replace('$', '').replace(',', ''))
     
-    df.dropna(axis=0, how='any', inplace=True)
+    df = df.dropna(axis=0, how='any')
     try:
         df['cost_basis'] = df.cost_basis.apply(parse_value)
         df['cost_basis_per_share'] = df.cost_basis_per_share.apply(parse_value)
     except AttributeError:
         print('cost basis already parsed')
+
+    new_df = pd.DataFrame(new_data, columns=df.columns, index=[df.index.max() + 1, df.index.max() + 2])
+    df = pd.concat([df, new_df])
+
+    df['acquisition_date'] = df.acquisition_date.apply(lambda dt: parser.parse(dt).date())
+    df = df.groupby(by=['acquisition_date', 'cost_basis_per_share'], as_index=False).agg({
+        'gain_loss': lambda df: df.iloc[0],
+        'cost_basis': 'sum',
+        'num_shares': 'sum',
+        # 'name': lambda df: ' - '.join(df),
+        'gain_loss': lambda df: df.iloc[0],
+        'lot': lambda df: ' - '.join([str(v) for v in df]),
+    })
     
-    df['name'] = df.apply(lambda row: ' - '.join([row['gain_loss'], str(row['cost_basis_per_share']), str(row['num_shares'])]), axis=1)
+    df['name'] = df.apply(lambda row: ' - '.join([str(row.name), row['gain_loss'], str(row['cost_basis_per_share']), str(row['num_shares'])]), axis=1)
+    df['gain_loss'] = df.acquisition_date.apply(lambda dt: 'Long Term' if dt + timedelta(days=365) < asofdate else 'Short Term')
     return df
+
 
 class Verbose(Enum):
     SILENT = 0
     MINIMUM = 1
     FULL = 2
 
-def minimize_tax(amount: Union[str, int, float], price: float, allocs: pd.DataFrame, verbose: Verbose, st_cap_gains=0.375, lt_cap_gains=0.238, minimum_gain=-3000) -> pd.DataFrame:
+
+def new_entry(dt, price, amt, asofdate=date.today()):
+    return {
+        'acquisition_date': dt, 'cost_basis_per_share': price, 'cost_basis': price * amt, 'num_shares': amt, 'lot': 1.0,
+        'gain_loss': 'Long Term' if parser.parse(dt).date() + timedelta(days=365) < asofdate else 'Short Term'
+    }
+
+
+def minimize_tax(amount: Union[str, int, float], price: float, allocs_input: pd.DataFrame, verbose: Verbose, st_cap_gains=0.375, lt_cap_gains=0.238, minimum_gain=-3000) -> pd.DataFrame:
     # given a table of stock allocations provide a set of trades which minimize tax implication of trade
+    allocs = allocs_input.copy()
     solver = pywraplp.Solver.CreateSolver('SAT')
     trades: List[pywraplp.Variable] = []
     total_tax = None  # variable to minimize
