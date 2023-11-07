@@ -3,8 +3,8 @@ Completely random things
 
 ### rsu_sales.py
 1. Make sure `google-ortools`, `pandas`, and `BeautifulSoup` are installed in your Python environment.
-2. Go to the Shareworks page containing a <table> with detailed RSU allocations.  In the browser, click to Inspect the HTML, then
-copy the outerHTML containing the <table> into a local file.
+2. Go to the Shareworks page containing a `<table>` with detailed RSU allocations.  In the browser, click to Inspect the HTML, then
+copy the outerHTML containing the `<table>` into a local file.
 3. Call the solver from the command line:
 ```
 $ python3 -m rsu_sales.py -html_file <shareworks-file.html> -amount <num_shares> -sale_price <price_to_sell>
