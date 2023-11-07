@@ -162,4 +162,4 @@ if __name__ == '__main__':
     soup = BeautifulSoup(html)
     df = shareworks_html_to_df(soup.find(attrs={'class':"sw-datatable", 'id':"Available for Sale/Transfer_table"}))
     df = minimize_tax(args.amount, args.sale_price, allocs=df, verbose=Verbose.MAXIMUM)
-    print(df)
+    print(df[df.suggested_trades > 0])
