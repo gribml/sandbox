@@ -7,7 +7,7 @@ Completely random things
 copy the outerHTML containing the `<table>` into a local file.
 3. Call the solver from the command line:
 ```
-$ python3 -m rsu_sales.py -html_file <shareworks-file.html> -amount <num_shares> -sale_price <price_to_sell>
+$ python3 -m rsu_sales.py --html_file <shareworks-file.html> --amount <num_shares> --sale_price <price_to_sell>
 ```
 
 The solver will print a pandas DataFrame containing the suggested amounts to sell from each allocation which minimizes US taxes,
