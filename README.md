@@ -1,5 +1,4 @@
-# sandbox
-Completely random things
+# Tax-optimal RSU Sales
 
 ### rsu_sales.py
 1. Make sure `google-ortools`, `pandas`, and `BeautifulSoup` are installed in your Python environment.
